@@ -26,12 +26,14 @@ UNAUTHENTICATED_BASE_URL[CE] = UNAUTHENTICATED_CE_BASE_URL;
 UNAUTHENTICATED_BASE_URL[EXTRA_CE] = UNAUTHENTICATED_EXTRA_CE_BASE_URL;
 
 const AI_MODELS = {
-    'DeepSeek-R1': 'deepseek/deepseek-r1:free',
-    'Mistral 7B Instruct': 'mistralai/mistral-7b-instruct:free',
-    'Microsoft Phi-3 Medium 128K Instruct': 'microsoft/phi-3-medium-128k-instruct:free',
-    'Meta Llama 3 8B Instruct': 'meta-llama/llama-3-8b-instruct:free',
-    'OpenChat 3.5 7B': 'openchat/openchat-7b:free',
-    'Microsoft Phi-3 Mini 128K Instruct': 'microsoft/phi-3-mini-128k-instruct:free',
+//    'DeepSeek-R1': 'deepseek/deepseek-r1:free',
+//    'Mistral 7B Instruct': 'mistralai/mistral-7b-instruct:free',
+//    'Microsoft Phi-3 Medium 128K Instruct': 'microsoft/phi-3-medium-128k-instruct:free',
+//    'Meta Llama 3 8B Instruct': 'meta-llama/llama-3-8b-instruct:free',
+//    'OpenChat 3.5 7B': 'openchat/openchat-7b:free',
+//    'Microsoft Phi-3 Mini 128K Instruct': 'microsoft/phi-3-mini-128k-instruct:free',
+    'Gemini 2.0 Flash': 'google/gemini-2.0-flash-001',
+    'Qwen 2.5 Coder 32B Instruct': 'qwen/qwen-2.5-coder-32b-instruct'
 }
 
 const INITIAL_WAIT_TIME_MS = 0;
@@ -261,6 +263,182 @@ diffStyles.textContent = `
     }
 `;
 document.head.appendChild(diffStyles);
+
+// Add inline suggestion styles
+const inlineSuggestionStyles = document.createElement('style');
+inlineSuggestionStyles.textContent = `
+    .monaco-editor .inline-completion-text {
+        color: #808080 !important;
+        opacity: 0.8 !important;
+        font-style: italic !important;
+    }
+
+    .monaco-editor .inline-completion-text.ghost-text {
+        color: #808080 !important;
+        opacity: 0.8 !important;
+        font-style: italic !important;
+    }
+
+    .monaco-editor .inline-completion-text.ghost-text-decoration {
+        color: #808080 !important;
+        opacity: 0.8 !important;
+        font-style: italic !important;
+    }
+
+    .monaco-editor .suggest-widget {
+        background-color: #1e1e1e !important;
+        border: 1px solid #3c3c3c !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    .monaco-editor .suggest-widget .monaco-list-row.focused {
+        background-color: #2d2d2d !important;
+    }
+
+    .monaco-editor .inline-completion-toolbar {
+        background: var(--vscode-editorWidget-background) !important;
+        border: 1px solid var(--vscode-editorWidget-border) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+    }
+
+    .monaco-editor .inline-completion-toolbar-status {
+        color: var(--vscode-editorWidget-foreground) !important;
+        font-style: italic !important;
+    }
+
+    .monaco-editor .inline-completion-toolbar-button {
+        color: var(--vscode-editorWidget-foreground) !important;
+        opacity: 0.8 !important;
+    }
+
+    .monaco-editor .inline-completion-toolbar-button:hover {
+        opacity: 1 !important;
+        background-color: var(--vscode-toolbar-hoverBackground) !important;
+    }
+`;
+document.head.appendChild(inlineSuggestionStyles);
+
+// Add this near the top of the file with other constants
+const AUTOCOMPLETE_DEBOUNCE_MS = 1500; // Adjust this value as needed
+
+// Add this helper function before the editor setup
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
+    try {
+        const apiKey = await getOpenRouterApiKey();
+        
+        // Get text before cursor and current line info
+        const beforeCursor = text.substring(0, cursorOffset);
+        const lines = beforeCursor.split('\n');
+        const currentLine = lines[lines.length - 1];
+        const currentIndent = currentLine.match(/^\s*/)[0];
+        
+        // Determine syntax-based indentation
+        let syntaxIndentLevel = 0;
+        if (language === 'python') {
+            // Check if current line ends with a colon (needs indent)
+            const endsWithColon = currentLine.trim().endsWith(':');
+            // Find the last line that actually controls indentation
+            let controlLineIndex = lines.length - 1;
+            while (controlLineIndex >= 0) {
+                const line = lines[controlLineIndex];
+                if (line.trim().endsWith(':')) {
+                    syntaxIndentLevel = Math.floor(line.match(/^\s*/)[0].length / 4) + 1;
+                    break;
+                } else if (line.trim().length > 0) {
+                    syntaxIndentLevel = Math.floor(line.match(/^\s*/)[0].length / 4);
+                    break;
+                }
+                controlLineIndex--;
+            }
+            if (endsWithColon) syntaxIndentLevel++;
+        } else {
+            syntaxIndentLevel = Math.floor(currentIndent.length / 4);
+        }
+
+        // Prepare context with strict indentation instructions
+        const requestBody = {
+            "model": "google/gemini-2.0-flash-001",
+            "messages": [{
+                "role": "system",
+                "content": `You are a Python code completion AI. Strictly follow these rules:
+1. NEVER repeat existing code
+2. Use EXACTLY 4 spaces per indentation level
+3. Ignore any existing indentation mistakes in the code
+4. Maintain proper block structure`
+            }, {
+                "role": "user",
+                "content": `Complete this code (▼ shows cursor position):\n${beforeCursor}▼`
+            }],
+            "temperature": 0.1,
+            "max_tokens": 50,
+            "stream": false
+        };
+
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": window.location.href,
+                "X-Title": "Cursor IDE"
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const data = await response.json();
+        console.log("Raw completion response:", data);
+
+        if (!response.ok) {
+            if (data.error?.code === 429) {
+                console.error("Rate limit exceeded. Please try again later.");
+                return null;
+            }
+            throw new Error(data.error?.message || `HTTP error! status: ${response.status}`);
+        }
+        
+        if (!data.choices?.[0]?.message?.content) {
+            console.error("Invalid response format:", data);
+            return null;
+        }
+
+        // Extract and clean up the completion
+        let completion = data.choices[0].message.content;
+        
+        completion = completion
+            .replace(/```.*?```/gs, '') // Remove code blocks
+            .replace(/^\s+|\s+$/g, ''); // Trim edges
+            
+        // 2. Convert all indentation to 4-space blocks
+        completion = completion.split('\n').map(line => {
+            // Count existing indent
+            const spaces = line.match(/^ */)[0].length;
+            const indentLevel = Math.floor(spaces / 4);
+            return '    '.repeat(indentLevel) + line.trimLeft();
+        }).join('\n');
+        
+        // 3. Apply syntax-based indentation
+        const finalIndent = '    '.repeat(syntaxIndentLevel);
+        completion = completion.split('\n')
+            .map(line => line.replace(finalIndent, ''))
+            .join('\n');
+
+        return completion;
+    } catch (error) {
+        console.error("Autocomplete error:", error);
+        return null;
+    }
+}
 
 function cleanDiffOutput(diff) {
     // Filter out the "No newline at end of file" markers
@@ -550,7 +728,6 @@ async function applySmartDiff(originalContent, proposedChanges) {
             content += '\n';
         }
 
-        console.log("Cleaned diff content:", content);
         return content;
     } catch (error) {
         console.error("Error in applySmartDiff:", error);
@@ -1230,7 +1407,120 @@ document.addEventListener("DOMContentLoaded", async function () {
         layout = new GoldenLayout(layoutConfig, $("#judge0-site-content"));
 
         layout.registerComponent("source", function (container, state) {
-            sourceEditor = monaco.editor.create(container.getElement()[0], {
+            
+            // Configure suggestions provider
+            const suggestionsProvider = {
+                provideCompletionItems: async function(model, position, context, token) {
+                    try {
+                        const text = model.getValue();
+                        const cursorOffset = model.getOffsetAt(position);
+                        const language = model.getLanguageId();
+
+                        const completion = await getAutoComplete(text, cursorOffset, language);
+
+                        if (!completion || completion.trim() === '') {
+                            return { suggestions: [] };
+                        }
+
+                        const lines = completion.split('\n');
+                        const insertText = completion;
+                        
+                        // Get the word at cursor position
+                        const wordUntilPosition = model.getWordUntilPosition(position);
+                        const range = {
+                            startLineNumber: position.lineNumber,
+                            startColumn: wordUntilPosition.startColumn,
+                            endLineNumber: position.lineNumber,
+                            endColumn: wordUntilPosition.endColumn
+                        };
+
+                        const suggestion = {
+                            label: {
+                                label: lines[0] + (lines.length > 1 ? '...' : ''),
+                                description: 'AI Suggestion'
+                            },
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: insertText,
+                            detail: 'AI Code Completion',
+                            documentation: {
+                                value: '```' + language + '\n' + completion + '\n```',
+                                isTrusted: true,
+                                supportThemeIcons: true
+                            },
+                            range: range,
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            sortText: '0000',
+                            filterText: lines[0],
+                            command: { 
+                                id: 'editor.action.triggerSuggest',
+                                title: 'Re-trigger completions...'
+                            }
+                        };
+
+                        return {
+                            suggestions: [suggestion],
+                            incomplete: true
+                        };
+                    } catch (error) {
+                        console.error('Error in completion:', error);
+                        return { suggestions: [] };
+                    }
+                },
+
+                triggerCharacters: ['.', '(', '{', '[', ' ', '\n', '\t'],
+            };
+
+            // Configure inline suggestions provider
+            const inlineProvider = {
+                async provideInlineCompletions(model, position, context, token) {
+                    try {
+                        const text = model.getValue();
+                        const cursorOffset = model.getOffsetAt(position);
+                        const language = model.getLanguageId();
+
+                        const completion = await getAutoComplete(text, cursorOffset, language);
+                        
+                        if (!completion || completion.trim() === '') {
+                            return { items: [] };
+                        }
+
+                        // Create a proper range for the completion
+                        const wordUntilPosition = model.getWordUntilPosition(position);
+                        const range = new monaco.Range(
+                            position.lineNumber,
+                            wordUntilPosition.startColumn,
+                            position.lineNumber + completion.split('\n').length - 1,
+                            position.column + completion.length
+                        );
+
+                        return {
+                            items: [{
+                                insertText: completion,
+                                range: range,
+                            }],
+                            suppressSuggestions: false,
+                            dispose: () => {} // Add dispose method
+                        };
+                    } catch (error) {
+                        console.error('Error in inline completion:', error);
+                        return { items: [], dispose: () => {} };
+                    }
+                },
+
+                freeInlineCompletions: (completions) => {
+                    if (completions?.dispose) {
+                        completions.dispose();
+                    }
+                },
+
+                handleItemDidShow: () => {},
+            };
+
+            // Register both providers
+            const suggestionDisposable = monaco.languages.registerCompletionItemProvider('*', suggestionsProvider);
+            const inlineDisposable = monaco.languages.registerInlineCompletionsProvider('*', inlineProvider);
+
+            const editorConfig = {
                 automaticLayout: true,
                 scrollBeyondLastLine: true,
                 readOnly: state.readOnly,
@@ -1238,11 +1528,129 @@ document.addEventListener("DOMContentLoaded", async function () {
                 fontFamily: "JetBrains Mono",
                 minimap: {
                     enabled: true
+                },
+                inlineCompletionsOptions: {
+                    enabled: true,
+                    showToolbar: 'always',
+                    mode: 'subword'
+                },
+                suggest: {
+                    preview: true,
+                    showStatusBar: true,
+                    showInlineDetails: true,
+                    snippetsPreventQuickSuggestions: false,
+                    showIcons: true,
+                    showMethods: true,
+                    showFunctions: true,
+                    showConstructors: true,
+                    filterGraceful: false,
+                    localityBonus: true,
+                    shareSuggestSelections: true,
+                    previewMode: 'prefix',
+                    insertMode: 'insert',
+                    snippetSuggestions: 'inline',
+                    suggestOnTriggerCharacters: true,
+                    acceptSuggestionOnEnter: 'on',
+                    selectionMode: 'always',
+                    showDeprecated: false,
+                    matchOnWordStartOnly: false,
+                    maxVisibleSuggestions: 12,
+                    hideSuggestionsOnType: false
+                },
+                quickSuggestions: {
+                    other: "on",
+                    comments: "on",
+                    strings: "on"
+                },
+                parameterHints: {
+                    enabled: true,
+                    cycle: true
+                },
+                hover: {
+                    enabled: true,
+                    delay: 300
+                },
+                tabCompletion: 'on',
+                wordBasedSuggestions: 'matchingDocuments',
+                suggestSelection: 'first',
+                suggestFontSize: 14,
+                suggestLineHeight: 24,
+            };
+
+            sourceEditor = monaco.editor.create(container.getElement()[0], editorConfig);
+
+            // Wait for editor to be ready before adding commands and listeners
+            setTimeout(() => {
+                // Create debounced trigger function
+                const debouncedTriggerSuggestions = debounce(() => {
+                    const model = sourceEditor.getModel();
+                    const position = sourceEditor.getPosition();
+                    
+                    // Only trigger if we're at the end of a line or after certain characters
+                    const lineContent = model.getLineContent(position.lineNumber);
+                    const charBeforeCursor = lineContent[position.column - 2] || '';
+                    const triggerChars = ['.', '(', '{', '[', ' ', '\n'];
+                    
+                    if (position.column < lineContent.length && 
+                        !triggerChars.includes(charBeforeCursor)) {
+                        return;
+                    }
+
+                    sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.trigger', {});
+                }, AUTOCOMPLETE_DEBOUNCE_MS);
+
+                // Add keyboard shortcut for triggering suggestions manually
+                sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
+                    // Don't debounce manual triggers
+                    sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.trigger', {});
+                });
+
+                // Add keyboard shortcut for accepting inline suggestion
+                sourceEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => {
+                    sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.commit', {});
+                });
+
+                // Add keyboard shortcut for showing next inline suggestion
+                sourceEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.BracketRight, () => {
+                    sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.showNext', {});
+                });
+
+                // Add event listener for cursor position changes
+                sourceEditor.onDidChangeCursorPosition((e) => {
+                    if (e.reason === monaco.editor.CursorChangeReason.ContentChange) {
+                        debouncedTriggerSuggestions();
+                    }
+                });
+
+                // Add event listener for content changes
+                sourceEditor.onDidChangeModelContent((e) => {
+                    debouncedTriggerSuggestions();
+                });
+
+                addAIChatContextMenu(sourceEditor);
+                sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
+
+            }, 100);
+
+            // Handle container resize
+            container.on('resize', () => {
+                if (sourceEditor) {
+                    sourceEditor.layout();
                 }
             });
 
-            addAIChatContextMenu(sourceEditor);
-            sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
+            // Handle container destroy
+            container.on('destroy', () => {
+                if (suggestionDisposable) {
+                    suggestionDisposable.dispose();
+                }
+                if (inlineDisposable) {
+                    inlineDisposable.dispose();
+                }
+                if (sourceEditor) {
+                    sourceEditor.dispose();
+                }
+            });
         });
 
         layout.registerComponent("stdin", function (container, state) {
