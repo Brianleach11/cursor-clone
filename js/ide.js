@@ -1,8 +1,8 @@
 import { IS_PUTER } from "./puter.js";
 import { createTwoFilesPatch, parsePatch } from 'https://cdn.jsdelivr.net/npm/diff@5.1.0/lib/index.mjs';
+import { OPENROUTER_API_KEY } from '../config.js';
 
 const API_KEY = ""; // Get yours at https://platform.sulu.sh/apis/judge0
-const OPENROUTER_API_KEY = "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";
 
 const AUTH_HEADERS = API_KEY ? {
     "Authorization": `Bearer ${API_KEY}`
@@ -108,7 +108,7 @@ var layoutConfig = {
                 componentName: "ai-chat",
                 id: "ai-chat",
                 title: "Chat",
-                isClosable: true,
+                isClosable: false,
                 componentState: {
                     readOnly: false
                 }
@@ -122,7 +122,21 @@ var gPuterFile;
 var lastFileState = '';
 var previousModel = '';
 
-//need to make the append message function global so that it can be used in the agenticProcess function
+// Add these patterns near the top with other constants
+const CODE_BLOCK_PATTERNS = [
+    /```[\w.]+\n[#/]+ (\S+)\n([\s\S]+?)```/,  // Python-style comments (#)
+    /```[\w.]+\n[/*]+ (\S+) \*\/\n([\s\S]+?)```/,  // C-style comments (/* */)
+    /```[\w.]+\n<!-- (\S+) -->\n([\s\S]+?)```/,  // HTML-style comments <!-- -->
+];
+
+// Add code pattern tips
+const DIFF_TIPS = {
+    '<Link': 'Ensure proper Link component usage',
+    'function': 'Maintain function signature and documentation',
+    'class': 'Preserve class structure and inheritance',
+    'import': 'Group related imports together',
+    'def': 'Maintain Python function definition style'
+};
 
 const diffStyles = document.createElement('style');
 diffStyles.textContent = `
@@ -139,6 +153,39 @@ diffStyles.textContent = `
         display: flex;
         justify-content: space-between;
         align-items: center;
+    }
+
+    .diff-controls {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .expand-btn {
+        background: none;
+        border: none;
+        color: #d4d4d4;
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+    }
+
+    .expand-btn:hover {
+        background: #3c3c3c;
+    }
+
+    .expand-icon {
+        transition: transform 0.3s ease;
+        display: inline-block;
+        transform: rotate(0deg);
+    }
+
+    .expand-icon.expanded {
+        transform: rotate(180deg);
     }
 
     .diff-legend {
@@ -215,40 +262,142 @@ diffStyles.textContent = `
 `;
 document.head.appendChild(diffStyles);
 
+function cleanDiffOutput(diff) {
+    // Filter out the "No newline at end of file" markers
+    diff.hunks.forEach(hunk => {
+        hunk.lines = hunk.lines
+            .filter(line => !line.includes('\\ No newline at end of file'))
+            .map(line => {
+                // Clean up any trailing AI commentary that might appear after code blocks
+                if (line.includes('```') || line.includes("I've") || line.includes('maintained')) {
+                    return line.split('```')[0].split("I've")[0].trim();
+                }
+                return line;
+            });
+    });
+    return diff;
+}
+
 function generateDiff(currentCode, proposedCode) {
+    // Ensure both strings end with newline
+    if (!currentCode.endsWith('\n')) currentCode += '\n';
+    if (!proposedCode.endsWith('\n')) proposedCode += '\n';
+    
     const diff = createTwoFilesPatch('current', 'proposed', currentCode, proposedCode, '', '', { context: 2 });
-    return parsePatch(diff)[0];
+    return cleanDiffOutput(parsePatch(diff)[0]);
 }
 
 function renderDiffPreview(diff) {
     const container = document.createElement('div');
     container.className = 'diff-preview';
     
-    // Add diff header
+    // Add diff header with expand button
     const header = document.createElement('div');
     header.className = 'diff-header';
     header.innerHTML = `
         <div class="diff-title">Proposed Changes</div>
-        <div class="diff-legend">
-            <span class="added-legend">Added</span>
-            <span class="removed-legend">Removed</span>
+        <div class="diff-controls">
+            <button class="expand-btn" title="Expand/Collapse">⌄</button>
+            <div class="diff-legend">
+                <span class="added-legend">Added</span>
+                <span class="removed-legend">Removed</span>
+            </div>
         </div>
     `;
     container.appendChild(header);
     
-    // Add diff content
-    const content = document.createElement('div');
-    content.className = 'diff-content';
-    
+    // Create editor container with transition
+    const editorContainer = document.createElement('div');
+    editorContainer.style.cssText = `
+        height: 200px;
+        margin: 8px;
+        border: 1px solid #3c3c3c;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+        transition: height 0.3s ease;
+    `;
+    container.appendChild(editorContainer);
+
+    // Convert the diff content to a string with proper markers
+    const diffLines = [];
     diff.hunks.forEach(hunk => {
+        if (hunk.header) diffLines.push(hunk.header);
         hunk.lines.forEach(line => {
-            const lineDiv = document.createElement('div');
-            lineDiv.className = `diff-line ${line[0] === '+' ? 'added' : line[0] === '-' ? 'removed' : 'unchanged'}`;
-            lineDiv.textContent = line;
-            content.appendChild(lineDiv);
+            diffLines.push(line);
         });
     });
-    container.appendChild(content);
+    
+    const diffContent = diffLines.join('\n');
+
+    // Create Monaco editor instance
+    const diffEditor = monaco.editor.create(editorContainer, {
+        value: diffContent,
+        language: 'plaintext',
+        theme: 'vs-dark',
+        readOnly: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: true,
+        renderLineHighlight: 'none',
+        fontFamily: 'JetBrains Mono',
+        fontSize: 12,
+        lineNumbers: 'on',
+        glyphMargin: true,
+        automaticLayout: true,
+        scrollbar: {
+            vertical: 'visible',
+            horizontal: 'visible',
+            useShadows: true,
+            verticalHasArrows: true,
+            horizontalHasArrows: true
+        }
+    });
+
+    // Add expand/collapse functionality
+    const expandBtn = header.querySelector('.expand-btn');
+    let isExpanded = false;
+
+    expandBtn.addEventListener('click', () => {
+        isExpanded = !isExpanded;
+        expandBtn.style.transform = isExpanded ? 'rotate(180deg)' : 'rotate(0deg)';
+        
+        // Calculate the required height based on line count
+        const lineCount = diffLines.length;
+        const lineHeight = 19; // Approximate line height in pixels
+        const padding = 10; // Extra padding
+        const fullHeight = Math.min(lineCount * lineHeight + padding, 600); // Cap at 600px
+        
+        editorContainer.style.height = isExpanded ? `${fullHeight}px` : '200px';
+        diffEditor.layout(); // Force Monaco editor to update its layout
+    });
+
+    // Add custom line decorations for added/removed lines
+    const decorations = [];
+    let lineNumber = 1;
+    diffLines.forEach(line => {
+        if (line[0] === '+') {
+            decorations.push({
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    className: 'diff-line-addition',
+                    glyphMarginClassName: 'diff-gutter-addition'
+                }
+            });
+        } else if (line[0] === '-') {
+            decorations.push({
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    className: 'diff-line-deletion',
+                    glyphMarginClassName: 'diff-gutter-deletion'
+                }
+            });
+        }
+        lineNumber++;
+    });
+
+    diffEditor.deltaDecorations([], decorations);
     
     // Add action buttons
     const actions = document.createElement('div');
@@ -258,10 +407,37 @@ function renderDiffPreview(diff) {
         <button class="reject-btn">Reject Changes</button>
     `;
     container.appendChild(actions);
+
+    // Add cleanup on container removal
+    const cleanup = () => {
+        if (diffEditor) {
+            diffEditor.dispose();
+        }
+    };
+    container.addEventListener('remove', cleanup);
     
     return container;
 }
 
+// Add Monaco editor specific styles for diffs
+const monacoStyles = document.createElement('style');
+monacoStyles.textContent = `
+    .diff-line-addition {
+        background: rgba(76, 175, 80, 0.2) !important;
+    }
+    .diff-line-deletion {
+        background: rgba(244, 67, 54, 0.2) !important;
+    }
+    .diff-gutter-addition {
+        border-left: 3px solid #4CAF50 !important;
+        margin-left: 3px;
+    }
+    .diff-gutter-deletion {
+        border-left: 3px solid #f44336 !important;
+        margin-left: 3px;
+    }
+`;
+document.head.appendChild(monacoStyles);
 
 function appendMessage(role, content) {
     // Get the chat history container
@@ -274,6 +450,7 @@ function appendMessage(role, content) {
         padding: 8px 12px;
         border-radius: 4px;
         max-width: 85%;
+        margin: 4px 0;
         ${role === 'user' ? 'align-self: flex-end;' : 'align-self: flex-start;'}
         background: ${role === 'user' ? '#0e639c' : '#2d2d2d'};
         border: 1px solid ${role === 'user' ? '#1177bb' : '#3c3c3c'};
@@ -286,6 +463,99 @@ function appendMessage(role, content) {
     messageDiv.appendChild(textSpan);
     chatHistory.appendChild(messageDiv);
     chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+async function applySmartDiff(originalContent, proposedChanges) {
+    const apiKey = await getOpenRouterApiKey();
+    
+    // Generate tips based on code patterns
+    const tips = [];
+    for (const [pattern, tip] of Object.entries(DIFF_TIPS)) {
+        if (proposedChanges.includes(pattern)) {
+            tips.push(` - ${tip}`);
+        }
+    }
+
+    // Clean up the proposed changes before sending
+    const cleanProposedChanges = proposedChanges
+        .replace(/^```[\w.]*\n/, '') // Remove opening code fence
+        .replace(/```$/, '')         // Remove closing code fence
+        .trim();
+
+    const prompt = `You are a senior software engineer that applies code changes to a file. Given the <original-content>, the <diff>, and the <adjustments>, apply the changes to the content. 
+
+                    - You must apply the <adjustments> provided even if this conflicts with the original diff
+                    - You must follow instructions from within comments in <diff> (e.g. <!-- remove this -->)
+                    - You must maintain the layout of the file especially in languages/formats where it matters
+                    - Do NOT include markdown code fences (\`\`\`) or language tags in your response
+                    - Do NOT include "Here is the updated content..." or similar phrases
+                    - DO NOT include non-code content without explicitly commenting it out
+                    - Respond ONLY with the raw code content
+
+                    <original-content>
+                    ${originalContent}
+                    </original-content>
+
+                    <diff>
+                    ${cleanProposedChanges}
+                    </diff>
+
+                    <adjustments>
+                    ${tips.join('\n')}
+                    - Maintain proper code structure and indentation
+                    - Remove any duplicate code sections
+                    - Ensure proper placement of new code
+                    </adjustments>`;
+
+    try {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": window.location.href,
+                "X-Title": "Cursor IDE"
+            },
+            body: JSON.stringify({
+                "model": getSelectedModel(),
+                "messages": [{
+                    "role": "user",
+                    "content": prompt
+                }],
+                "temperature": 0.1,
+                "max_tokens": 2000
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        let content = data.choices[0].message.content;
+        
+        // Clean up the response
+        content = content
+            .replace(/^Here is the[^]*?:\n*/i, '')
+            .replace(/^```[\w.]*\n/m, '')
+            .replace(/```$/m, '')
+            .replace(/^Here are the changes[^]*?:\n*/i, '')
+            .trim();
+
+        // Ensure proper line endings
+        content = content.replace(/\r\n/g, '\n');
+        
+        // Add final newline if missing
+        if (!content.endsWith('\n')) {
+            content += '\n';
+        }
+
+        console.log("Cleaned diff content:", content);
+        return content;
+    } catch (error) {
+        console.error("Error in applySmartDiff:", error);
+        return proposedChanges;
+    }
 }
 
 async function agenticProcess(userInput) {
@@ -309,19 +579,20 @@ async function agenticProcess(userInput) {
             // Show loading state
             const loadingMessage = document.createElement('div');
             loadingMessage.className = 'chat-message loading-message';
-            loadingMessage.textContent = 'Loading...';
+            loadingMessage.textContent = 'Thinking...';
             chatHistory.appendChild(loadingMessage);
 
             const prompt = await generatePrompt(userInput, hasNewModel);
-            console.log("PROMPT GENERATED: ", prompt);
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+            const apiKey = await getOpenRouterApiKey();
+            
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
                 headers: {
-                    "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+                    "Authorization": `Bearer ${apiKey}`,
                     "Content-Type": "application/json",
                     "HTTP-Referer": window.location.href,
                     "X-Title": "Cursor IDE"
@@ -344,30 +615,33 @@ async function agenticProcess(userInput) {
 
             const data = await response.json();
             const aiResponse = data.choices[0].message.content;
-
             loadingMessage.remove();
 
-            // Extract code from AI response
+            // Extract code and preserve the rest of the response
+            let proposedChanges;
+            let explanation = aiResponse;
             const codeMatch = aiResponse.match(/```[\s\S]*?\n([\s\S]*?)```/);
-            if (!codeMatch) {
-                throw new Error("No code block found in AI response");
+
+            if (codeMatch) {
+                proposedChanges = codeMatch[1];
+                explanation = aiResponse.replace(/```[\s\S]*?```/g, '').trim();
+                
+                if (explanation) {
+                    appendMessage('assistant', explanation);
+                }
+            } else {
+                // If no code block, just show the response
+                appendMessage('assistant', aiResponse);
+                return true; // Exit if this was just a conversation response
             }
 
-            const proposedCode = codeMatch[1];
-            const currentCode = sourceEditor.getValue();
+            // Show a loading message for the diff process
+            appendMessage('assistant', 'Applying changes intelligently...');
             
-            // Run linting first
-            appendMessage('assistant', 'Checking code quality...');
-            const lintErrors = [];
-            console.log("SKIPPING LINTING FOR NOW");
-            if (lintErrors.length > 0) {
-                appendMessage('assistant', `Found ${lintErrors.length} issues. Requesting fixes...`);
-                userInput = `Fix these linting issues: ${lintErrors.join(", ")}. Original request: ${userInput}`;
-                attempts++;
-                continue;
-            }
-
-            // If linting passes, show diff preview
+            const currentCode = sourceEditor.getValue();
+            const proposedCode = await applySmartDiff(currentCode, proposedChanges);
+            
+            // Generate and show the diff preview
             const diff = generateDiff(currentCode, proposedCode);
             const diffPreview = renderDiffPreview(diff);
             
@@ -402,8 +676,12 @@ async function agenticProcess(userInput) {
             hasError = !accepted;
 
         } catch (error) {
+            if (error.message.includes('API key not found')) {
+                appendMessage('assistant', 'Error: OpenRouter API key not configured. Please check your .env file.');
+            } else {
+                appendMessage('assistant', `Error: ${error.message}`);
+            }
             console.error("Error in agenticProcess:", error);
-            appendMessage('assistant', `Error: ${error.message}`);
             attempts++;
         }
     }
@@ -498,6 +776,7 @@ Key security considerations:`;
                     Query: ${userInput} [/INST]`;
     }
 }
+
 function encode(str) {
     return btoa(unescape(encodeURIComponent(str || "")));
 }
@@ -962,6 +1241,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 }
             });
 
+            addAIChatContextMenu(sourceEditor);
             sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
         });
 
@@ -976,6 +1256,8 @@ document.addEventListener("DOMContentLoaded", async function () {
                     enabled: false
                 }
             });
+            
+            addAIChatContextMenu(stdinEditor);
         });
 
         layout.registerComponent("stdout", function (container, state) {
@@ -989,6 +1271,8 @@ document.addEventListener("DOMContentLoaded", async function () {
                     enabled: false
                 }
             });
+            
+            addAIChatContextMenu(stdoutEditor);
         });
 
         
@@ -1044,6 +1328,8 @@ document.addEventListener("DOMContentLoaded", async function () {
                 gap: 10px;
                 padding: 10px;
                 border-top: 1px solid #3c3c3c;
+                margin-bottom: 22px;
+                align-items: flex-end;
             `;
 
             // Create textarea for input
@@ -1058,9 +1344,28 @@ document.addEventListener("DOMContentLoaded", async function () {
                 border: 1px solid #3c3c3c;
                 border-radius: 4px;
                 font-family: inherit;
+                min-height: 20px;
+                max-height: 150px;
+                height: auto;
                 resize: none;
-                height: 40px;
+                overflow-y: hidden;
             `;
+
+            // Add auto-resize functionality
+            textarea.addEventListener('input', function() {
+                // Reset height to allow shrinking
+                this.style.height = 'auto';
+                
+                // Set new height based on scroll height, constrained by min/max
+                const newHeight = Math.min(Math.max(this.scrollHeight, 20), 150);
+                this.style.height = newHeight + 'px';
+            });
+
+            // Initialize height on creation
+            setTimeout(() => {
+                const event = new Event('input', { bubbles: true });
+                textarea.dispatchEvent(event);
+            }, 0);
 
             // Create submit button
             const submitButton = document.createElement('button');
@@ -1074,7 +1379,11 @@ document.addEventListener("DOMContentLoaded", async function () {
                 border-radius: 4px;
                 cursor: pointer;
                 font-family: inherit;
+                height: 36px;
+                min-height: 36px;
+                align-self: flex-end;
             `;
+
             submitButton.addEventListener('mouseover', () => {
                 submitButton.style.background = '#1177bb';
             });
@@ -1201,7 +1510,7 @@ const DEFAULT_SOURCE = "\
 using Vertex    = std::uint16_t;\n\
 using Cost      = std::uint16_t;\n\
 using Edge      = std::pair< Vertex, Cost >;\n\
-using Graph     = std::vector< std::vector< Edge > >;\n\
+using Graph     = std::vector< std::vector< Edge > > >;\n\
 using CostTable = std::vector< std::uint64_t >;\n\
 \n\
 constexpr auto kInfiniteCost{ std::numeric_limits< CostTable::value_type >::max() };\n\
@@ -1381,4 +1690,43 @@ function getSelectedModel() {
     const modelSelector = document.getElementById('ai-model-selector');
     if (!modelSelector) return AI_MODELS['DeepSeek-R1']; // Default model if selector not found
     return modelSelector.value;
+}
+
+// Helper function to escape special regex characters
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function getOpenRouterApiKey() {
+    if (!OPENROUTER_API_KEY) {
+        throw new Error('OpenRouter API key not found in configuration');
+    }
+    return OPENROUTER_API_KEY;
+}
+
+// Helper function to add AI Chat context menu to any editor
+function addAIChatContextMenu(editor) {
+    editor.addAction({
+        id: 'add-to-ai-chat',
+        label: 'Add to AI Chat',
+        contextMenuGroupId: 'ai',
+        contextMenuOrder: 1.5,
+        run: function(editor) {
+            const selection = editor.getSelection();
+            const selectedText = editor.getModel().getValueInRange(selection);
+            
+            if (selectedText) {
+                const chatInput = document.getElementById('chat-input');
+                if (chatInput) {
+                    const currentValue = chatInput.value;
+                    chatInput.value = currentValue + (currentValue ? '\n' : '') + selectedText;
+                    chatInput.focus();
+                    chatInput.scrollTop = chatInput.scrollHeight;
+                    // Trigger the resize event
+                    const event = new Event('input', { bubbles: true });
+                    chatInput.dispatchEvent(event);
+                }
+            }
+        }
+    });
 }
