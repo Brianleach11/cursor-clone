@@ -1,6 +1,173 @@
 import { IS_PUTER } from "./puter.js";
 import { createTwoFilesPatch, parsePatch } from 'https://cdn.jsdelivr.net/npm/diff@5.1.0/lib/index.mjs';
 import { OPENROUTER_API_KEY } from '../config.js';
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+// Configure marked options
+marked.setOptions({
+    gfm: true,
+    breaks: true,
+    highlight: function(code, lang) {
+        if (monaco && lang) {
+            // Use Monaco's built-in tokenizer for syntax highlighting
+            const model = monaco.editor.createModel(code, lang);
+            const tokens = monaco.editor.tokenize(code, lang);
+            model.dispose();
+            
+            let html = '';
+            let currentLine = 0;
+            tokens.forEach((line) => {
+                if (currentLine > 0) html += '\n';
+                line.forEach((token) => {
+                    const content = code.substring(token.offset, token.offset + token.length);
+                    html += `<span class="token ${token.type}">${content}</span>`;
+                });
+                currentLine++;
+            });
+            return html;
+        }
+        return code;
+    }
+});
+
+// Add markdown styles
+const markdownStyles = document.createElement('style');
+markdownStyles.textContent = `
+    .markdown-content {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        line-height: 1.6;
+        color: #d4d4d4;
+    }
+    
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+        margin-top: 24px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        line-height: 1.25;
+    }
+    
+    .markdown-content h1 { font-size: 2em; }
+    .markdown-content h2 { font-size: 1.5em; }
+    .markdown-content h3 { font-size: 1.25em; }
+    .markdown-content h4 { font-size: 1em; }
+    .markdown-content h5 { font-size: 0.875em; }
+    .markdown-content h6 { font-size: 0.85em; }
+    
+    .markdown-content p {
+        margin-top: 0;
+        margin-bottom: 16px;
+    }
+    
+    .markdown-content a {
+        color: #58a6ff;
+        text-decoration: none;
+    }
+    
+    .markdown-content a:hover {
+        text-decoration: underline;
+    }
+    
+    .markdown-content code {
+        font-family: 'JetBrains Mono', monospace;
+        padding: 0.2em 0.4em;
+        margin: 0;
+        font-size: 85%;
+        background-color: rgba(110, 118, 129, 0.4);
+        border-radius: 6px;
+    }
+    
+    .markdown-content pre {
+        padding: 16px;
+        overflow: auto;
+        font-size: 85%;
+        line-height: 1.45;
+        background-color: #1e1e1e;
+        border-radius: 6px;
+        margin-bottom: 16px;
+    }
+    
+    .markdown-content pre code {
+        padding: 0;
+        margin: 0;
+        font-size: 100%;
+        word-break: normal;
+        white-space: pre;
+        background: transparent;
+        border: 0;
+    }
+    
+    .markdown-content ul,
+    .markdown-content ol {
+        margin-top: 0;
+        margin-bottom: 16px;
+        padding-left: 2em;
+    }
+    
+    .markdown-content li {
+        margin-bottom: 0.25em;
+    }
+    
+    .markdown-content blockquote {
+        margin: 0 0 16px;
+        padding: 0 1em;
+        color: #8b949e;
+        border-left: 0.25em solid #30363d;
+    }
+    
+    .markdown-content img {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+    
+    .markdown-content hr {
+        height: 0.25em;
+        padding: 0;
+        margin: 24px 0;
+        background-color: #30363d;
+        border: 0;
+    }
+    
+    .markdown-content table {
+        border-spacing: 0;
+        border-collapse: collapse;
+        margin-bottom: 16px;
+        width: 100%;
+    }
+    
+    .markdown-content table th,
+    .markdown-content table td {
+        padding: 6px 13px;
+        border: 1px solid #30363d;
+    }
+    
+    .markdown-content table tr {
+        background-color: #0d1117;
+        border-top: 1px solid #30363d;
+    }
+    
+    .markdown-content table tr:nth-child(2n) {
+        background-color: #161b22;
+    }
+    
+    /* Syntax highlighting tokens */
+    .token.comment { color: #6a9955; }
+    .token.string { color: #ce9178; }
+    .token.number { color: #b5cea8; }
+    .token.keyword { color: #569cd6; }
+    .token.operator { color: #d4d4d4; }
+    .token.class-name { color: #4ec9b0; }
+    .token.function { color: #dcdcaa; }
+    .token.variable { color: #9cdcfe; }
+    .token.parameter { color: #9cdcfe; }
+    .token.property { color: #9cdcfe; }
+    .token.punctuation { color: #d4d4d4; }
+`;
+document.head.appendChild(markdownStyles);
 
 const API_KEY = ""; // Get yours at https://platform.sulu.sh/apis/judge0
 
@@ -634,11 +801,80 @@ function appendMessage(role, content) {
         border: 1px solid ${role === 'user' ? '#1177bb' : '#3c3c3c'};
     `;
     
-    const textSpan = document.createElement('span');
-    textSpan.textContent = content;
-    textSpan.style.wordBreak = 'break-word';
+    // Create content container with markdown support
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'markdown-content';
     
-    messageDiv.appendChild(textSpan);
+    if (role === 'user') {
+        // For user messages, just use plain text
+        contentDiv.textContent = content;
+    } else {
+        // For assistant messages, render markdown
+        try {
+            contentDiv.innerHTML = marked.parse(content);
+            
+            // Add click handlers for code blocks
+            contentDiv.querySelectorAll('pre code').forEach((block) => {
+                // Add copy button
+                const copyButton = document.createElement('button');
+                copyButton.className = 'code-copy-btn';
+                copyButton.innerHTML = '📋';
+                copyButton.style.cssText = `
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    background: transparent;
+                    border: none;
+                    color: #d4d4d4;
+                    cursor: pointer;
+                    font-size: 14px;
+                    opacity: 0;
+                    transition: opacity 0.2s;
+                `;
+                
+                // Add container for code block with relative positioning
+                const codeContainer = document.createElement('div');
+                codeContainer.style.position = 'relative';
+                
+                // Move code block into container
+                block.parentNode.insertBefore(codeContainer, block);
+                codeContainer.appendChild(block.parentNode);
+                codeContainer.appendChild(copyButton);
+                
+                // Show/hide copy button on hover
+                codeContainer.addEventListener('mouseenter', () => {
+                    copyButton.style.opacity = '1';
+                });
+                codeContainer.addEventListener('mouseleave', () => {
+                    copyButton.style.opacity = '0';
+                });
+                
+                // Copy code on click
+                copyButton.addEventListener('click', async () => {
+                    const code = block.textContent;
+                    await navigator.clipboard.writeText(code);
+                    
+                    // Show feedback
+                    const originalText = copyButton.innerHTML;
+                    copyButton.innerHTML = '✓';
+                    setTimeout(() => {
+                        copyButton.innerHTML = originalText;
+                    }, 2000);
+                });
+            });
+            
+            // Make links open in new tab
+            contentDiv.querySelectorAll('a').forEach(link => {
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+            });
+        } catch (error) {
+            console.error('Error parsing markdown:', error);
+            contentDiv.textContent = content;
+        }
+    }
+    
+    messageDiv.appendChild(contentDiv);
     chatHistory.appendChild(messageDiv);
     chatHistory.scrollTop = chatHistory.scrollHeight;
 }
