@@ -1681,6 +1681,14 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
             
             addAIChatContextMenu(stdoutEditor);
+
+            // Add content change listener
+            stdoutEditor.onDidChangeModelContent((e) => {
+                const content = stdoutEditor.getValue();
+                if (content.trim().length > 0) {
+                    analyzeOutputError(content);
+                }
+            });
         });
 
         
@@ -2137,4 +2145,92 @@ function addAIChatContextMenu(editor) {
             }
         }
     });
+}
+
+async function analyzeOutputError(output) {
+    try {
+        const apiKey = await getOpenRouterApiKey();
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": window.location.href,
+                "X-Title": "Cursor IDE"
+            },
+            body: JSON.stringify({
+                "model": "google/gemini-2.0-flash-001",
+                "messages": [{
+                    "role": "user",
+                    "content": `Analyze this code execution output and respond with only "error" or "success": ${output}`
+                }],
+                "temperature": 0.1
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const analysis = data.choices[0].message.content.toLowerCase().trim();
+        console.log("Analysis:", analysis);
+        
+        if (analysis === "error") {
+            // Create error help prompt
+            const chatHistory = document.getElementById('chat-history');
+            if (!chatHistory) return;
+
+            const helpMessage = document.createElement('div');
+            helpMessage.className = 'chat-message assistant-message';
+            helpMessage.innerHTML = `
+                <div style="margin-bottom: 10px;">Would you like some help with that error?</div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="error-help-yes" class="error-help-btn" style="padding: 5px 15px; background: #0e639c; color: white; border: none; border-radius: 4px; cursor: pointer;">Yes</button>
+                    <button id="error-help-no" class="error-help-btn" style="padding: 5px 15px; background: #4d4d4d; color: white; border: none; border-radius: 4px; cursor: pointer;">No</button>
+                </div>
+            `;
+            chatHistory.appendChild(helpMessage);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            // Create promise for user response
+            return new Promise((resolve) => {
+                const yesBtn = helpMessage.querySelector('#error-help-yes');
+                const noBtn = helpMessage.querySelector('#error-help-no');
+                let timeout;
+
+                const cleanup = () => {
+                    clearTimeout(timeout);
+                    yesBtn.removeEventListener('click', handleYes);
+                    noBtn.removeEventListener('click', handleNo);
+                };
+
+                const handleYes = () => {
+                    cleanup();
+                    resolve(true);
+                    // Create error fix prompt and send to agenticProcess
+                    const errorFixPrompt = `I got this error in my code. Can you help me fix it?\n\nError output:\n${output}`;
+                    agenticProcess(errorFixPrompt);
+                };
+
+                const handleNo = () => {
+                    cleanup();
+                    resolve(false);
+                };
+
+                yesBtn.addEventListener('click', handleYes);
+                noBtn.addEventListener('click', handleNo);
+
+                // Set timeout for 15 seconds
+                timeout = setTimeout(() => {
+                    cleanup();
+                    resolve(false);
+                    helpMessage.remove();
+                }, 15000);
+            });
+        }
+    } catch (error) {
+        console.error('Error analyzing output:', error);
+        return false;
+    }
 }
