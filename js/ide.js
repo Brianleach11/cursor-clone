@@ -3,13 +3,12 @@ import { createTwoFilesPatch, parsePatch } from 'https://cdn.jsdelivr.net/npm/di
 import { OPENROUTER_API_KEY } from '../config.js';
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
 
-// Configure marked options
+// ADDED: Markdown options
 marked.setOptions({
     gfm: true,
     breaks: true,
     highlight: function(code, lang) {
         if (monaco && lang) {
-            // Use Monaco's built-in tokenizer for syntax highlighting
             const model = monaco.editor.createModel(code, lang);
             const tokens = monaco.editor.tokenize(code, lang);
             model.dispose();
@@ -30,7 +29,7 @@ marked.setOptions({
     }
 });
 
-// Add markdown styles
+// ADDED: Markdown styles
 const markdownStyles = document.createElement('style');
 markdownStyles.textContent = `
     .markdown-content {
@@ -192,6 +191,7 @@ var UNAUTHENTICATED_BASE_URL = {};
 UNAUTHENTICATED_BASE_URL[CE] = UNAUTHENTICATED_CE_BASE_URL;
 UNAUTHENTICATED_BASE_URL[EXTRA_CE] = UNAUTHENTICATED_EXTRA_CE_BASE_URL;
 
+// ADDED: AI models
 const AI_MODELS = {
 //    'DeepSeek-R1': 'deepseek/deepseek-r1:free',
 //    'Mistral 7B Instruct': 'mistralai/mistral-7b-instruct:free',
@@ -270,6 +270,7 @@ var layoutConfig = {
                 }
             }]
         }, {
+            // ADDED: AI chat column configuration
             type: "column",
             width: 25,
             content: [{
@@ -291,14 +292,7 @@ var gPuterFile;
 var lastFileState = '';
 var previousModel = '';
 
-// Add these patterns near the top with other constants
-const CODE_BLOCK_PATTERNS = [
-    /```[\w.]+\n[#/]+ (\S+)\n([\s\S]+?)```/,  // Python-style comments (#)
-    /```[\w.]+\n[/*]+ (\S+) \*\/\n([\s\S]+?)```/,  // C-style comments (/* */)
-    /```[\w.]+\n<!-- (\S+) -->\n([\s\S]+?)```/,  // HTML-style comments <!-- -->
-];
-
-// Add code pattern tips
+// ADDED: Code pattern tips
 const DIFF_TIPS = {
     '<Link': 'Ensure proper Link component usage',
     'function': 'Maintain function signature and documentation',
@@ -307,6 +301,7 @@ const DIFF_TIPS = {
     'def': 'Maintain Python function definition style'
 };
 
+// ADDED: Diff styles
 const diffStyles = document.createElement('style');
 diffStyles.textContent = `
     .diff-preview {
@@ -431,7 +426,7 @@ diffStyles.textContent = `
 `;
 document.head.appendChild(diffStyles);
 
-// Add inline suggestion styles
+// ADDED: Inline suggestion styles
 const inlineSuggestionStyles = document.createElement('style');
 inlineSuggestionStyles.textContent = `
     .monaco-editor .inline-completion-text {
@@ -485,10 +480,10 @@ inlineSuggestionStyles.textContent = `
 `;
 document.head.appendChild(inlineSuggestionStyles);
 
-// Add this near the top of the file with other constants
-const AUTOCOMPLETE_DEBOUNCE_MS = 1500; // Adjust this value as needed
+// ADDED: Autocomplete debounce time
+const AUTOCOMPLETE_DEBOUNCE_MS = 1500; 
 
-// Add this helper function before the editor setup
+// ADDED: Autocomplete debounce function
 function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -500,22 +495,19 @@ function debounce(func, wait) {
         timeout = setTimeout(later, wait);
     };
 }
+// ADDED: Auto-complete suggestions
 async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
     try {
         const apiKey = await getOpenRouterApiKey();
         
-        // Get text before cursor and current line info
         const beforeCursor = text.substring(0, cursorOffset);
         const lines = beforeCursor.split('\n');
         const currentLine = lines[lines.length - 1];
         const currentIndent = currentLine.match(/^\s*/)[0];
         
-        // Determine syntax-based indentation
         let syntaxIndentLevel = 0;
         if (language === 'python') {
-            // Check if current line ends with a colon (needs indent)
             const endsWithColon = currentLine.trim().endsWith(':');
-            // Find the last line that actually controls indentation
             let controlLineIndex = lines.length - 1;
             while (controlLineIndex >= 0) {
                 const line = lines[controlLineIndex];
@@ -533,16 +525,15 @@ async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
             syntaxIndentLevel = Math.floor(currentIndent.length / 4);
         }
 
-        // Prepare context with strict indentation instructions
         const requestBody = {
             "model": "google/gemini-2.0-flash-001",
             "messages": [{
                 "role": "system",
                 "content": `You are a Python code completion AI. Strictly follow these rules:
-1. NEVER repeat existing code
-2. Use EXACTLY 4 spaces per indentation level
-3. Ignore any existing indentation mistakes in the code
-4. Maintain proper block structure`
+                            1. NEVER repeat existing code
+                            2. Use EXACTLY 4 spaces per indentation level
+                            3. Ignore any existing indentation mistakes in the code
+                            4. Maintain proper block structure`
             }, {
                 "role": "user",
                 "content": `Complete this code (▼ shows cursor position):\n${beforeCursor}▼`
@@ -564,7 +555,6 @@ async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
         });
 
         const data = await response.json();
-        console.log("Raw completion response:", data);
 
         if (!response.ok) {
             if (data.error?.code === 429) {
@@ -579,22 +569,18 @@ async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
             return null;
         }
 
-        // Extract and clean up the completion
         let completion = data.choices[0].message.content;
         
         completion = completion
-            .replace(/```.*?```/gs, '') // Remove code blocks
-            .replace(/^\s+|\s+$/g, ''); // Trim edges
+            .replace(/```.*?```/gs, '')
+            .replace(/^\s+|\s+$/g, '');
             
-        // 2. Convert all indentation to 4-space blocks
         completion = completion.split('\n').map(line => {
-            // Count existing indent
             const spaces = line.match(/^ */)[0].length;
             const indentLevel = Math.floor(spaces / 4);
             return '    '.repeat(indentLevel) + line.trimLeft();
         }).join('\n');
         
-        // 3. Apply syntax-based indentation
         const finalIndent = '    '.repeat(syntaxIndentLevel);
         completion = completion.split('\n')
             .map(line => line.replace(finalIndent, ''))
@@ -607,13 +593,12 @@ async function getAutoComplete(text, cursorOffset, language = 'plaintext') {
     }
 }
 
+// ADDED: Sometimes models will yap despite prompting
 function cleanDiffOutput(diff) {
-    // Filter out the "No newline at end of file" markers
     diff.hunks.forEach(hunk => {
         hunk.lines = hunk.lines
             .filter(line => !line.includes('\\ No newline at end of file'))
             .map(line => {
-                // Clean up any trailing AI commentary that might appear after code blocks
                 if (line.includes('```') || line.includes("I've") || line.includes('maintained')) {
                     return line.split('```')[0].split("I've")[0].trim();
                 }
@@ -623,8 +608,8 @@ function cleanDiffOutput(diff) {
     return diff;
 }
 
+// ADDED: Uses the diff library to generate a diff
 function generateDiff(currentCode, proposedCode) {
-    // Ensure both strings end with newline
     if (!currentCode.endsWith('\n')) currentCode += '\n';
     if (!proposedCode.endsWith('\n')) proposedCode += '\n';
     
@@ -632,26 +617,113 @@ function generateDiff(currentCode, proposedCode) {
     return cleanDiffOutput(parsePatch(diff)[0]);
 }
 
-function renderDiffPreview(diff) {
+// ADDED: Constructs the file ( Pre-diff code + diff code + post-diff code)
+function createCompleteFileView(originalCode, diff) {
+    const lines = originalCode.split('\n');
+    const result = [];
+    let currentLine = 0;
+    
+    diff.hunks.forEach(hunk => {
+        const hunkStart = hunk.oldStart - 1;
+        
+        while (currentLine < hunkStart) {
+            result.push(lines[currentLine]);
+            currentLine++;
+        }
+        
+        hunk.lines.forEach(line => {
+            if (line.startsWith('-')) {
+                result.push('-' + lines[currentLine]);
+                currentLine++;
+            } else if (line.startsWith('+')) {
+                result.push('+' + line.substring(1));
+            } else {
+                result.push(lines[currentLine]);
+                currentLine++;
+            }
+        });
+    });
+    
+    while (currentLine < lines.length) {
+        result.push(lines[currentLine]);
+        currentLine++;
+    }
+    
+    return result.join('\n');
+}
+
+// ADDED: Custom line decorations for added/removed lines
+// ADDED: Key down handler to prevent editing of deletion lines
+function applyDiffDecorations(editor, content) {
+    const lines = content.split('\n');
+    const decorations = [];
+    let lineNumber = 1;
+    
+    const deletionLines = new Set();
+    
+    lines.forEach(line => {
+        if (line[0] === '+') {
+            decorations.push({
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    className: 'diff-line-addition',
+                    glyphMarginClassName: 'diff-gutter-addition'
+                }
+            });
+        } else if (line[0] === '-') {
+            decorations.push({
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    className: 'diff-line-deletion editor-line-readonly',
+                    glyphMarginClassName: 'diff-gutter-deletion'
+                }
+            });
+            deletionLines.add(lineNumber);
+        }
+        lineNumber++;
+    });
+
+    editor.onKeyDown(e => {
+        const selections = editor.getSelections();
+        if (!selections) return;
+        
+        const isInDeletionLine = selections.some(selection => {
+            if (!selection) return false;
+            const startLine = selection.startLineNumber;
+            const endLine = selection.endLineNumber;
+            // Check if any line in the selection is a deletion line
+            for (let line = startLine; line <= endLine; line++) {
+                if (deletionLines.has(line)) return true;
+            }
+            return false;
+        });
+
+        if (isInDeletionLine) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    });
+    
+    return editor.deltaDecorations([], decorations);
+}
+
+// ADDED: Diff preview
+function renderDiffPreview(diff, proposedCode) {
     const container = document.createElement('div');
     container.className = 'diff-preview';
     
-    // Add diff header with expand button
-    const header = document.createElement('div');
-    header.className = 'diff-header';
-    header.innerHTML = `
-        <div class="diff-title">Proposed Changes</div>
-        <div class="diff-controls">
-            <button class="expand-btn" title="Expand/Collapse">⌄</button>
-            <div class="diff-legend">
-                <span class="added-legend">Added</span>
-                <span class="removed-legend">Removed</span>
-            </div>
-        </div>
-    `;
-    container.appendChild(header);
+    const diffLines = [];
+    diff.hunks.forEach(hunk => {
+        if (hunk.header) diffLines.push(hunk.header);
+        hunk.lines.forEach(line => {
+            diffLines.push(line);
+        });
+    });
     
-    // Create editor container with transition
+    const diffContent = diffLines.join('\n');
+
     const editorContainer = document.createElement('div');
     editorContainer.style.cssText = `
         height: 200px;
@@ -664,18 +736,7 @@ function renderDiffPreview(diff) {
     `;
     container.appendChild(editorContainer);
 
-    // Convert the diff content to a string with proper markers
-    const diffLines = [];
-    diff.hunks.forEach(hunk => {
-        if (hunk.header) diffLines.push(hunk.header);
-        hunk.lines.forEach(line => {
-            diffLines.push(line);
-        });
-    });
-    
-    const diffContent = diffLines.join('\n');
-
-    // Create Monaco editor instance
+    // ADDED: Monaco editor instance for diff preview
     const diffEditor = monaco.editor.create(editorContainer, {
         value: diffContent,
         language: 'plaintext',
@@ -698,73 +759,67 @@ function renderDiffPreview(diff) {
         }
     });
 
-    // Add expand/collapse functionality
-    const expandBtn = header.querySelector('.expand-btn');
-    let isExpanded = false;
+    applyDiffDecorations(diffEditor, diffContent);
 
-    expandBtn.addEventListener('click', () => {
-        isExpanded = !isExpanded;
-        expandBtn.style.transform = isExpanded ? 'rotate(180deg)' : 'rotate(0deg)';
-        
-        // Calculate the required height based on line count
-        const lineCount = diffLines.length;
-        const lineHeight = 19; // Approximate line height in pixels
-        const padding = 10; // Extra padding
-        const fullHeight = Math.min(lineCount * lineHeight + padding, 600); // Cap at 600px
-        
-        editorContainer.style.height = isExpanded ? `${fullHeight}px` : '200px';
-        diffEditor.layout(); // Force Monaco editor to update its layout
-    });
-
-    // Add custom line decorations for added/removed lines
-    const decorations = [];
-    let lineNumber = 1;
-    diffLines.forEach(line => {
-        if (line[0] === '+') {
-            decorations.push({
-                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-                options: {
-                    isWholeLine: true,
-                    className: 'diff-line-addition',
-                    glyphMarginClassName: 'diff-gutter-addition'
-                }
-            });
-        } else if (line[0] === '-') {
-            decorations.push({
-                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-                options: {
-                    isWholeLine: true,
-                    className: 'diff-line-deletion',
-                    glyphMarginClassName: 'diff-gutter-deletion'
-                }
-            });
-        }
-        lineNumber++;
-    });
-
-    diffEditor.deltaDecorations([], decorations);
-    
-    // Add action buttons
     const actions = document.createElement('div');
     actions.className = 'diff-actions';
     actions.innerHTML = `
+        <button class="show-in-source-btn">Show in Source Code</button>
         <button class="accept-btn">Accept Changes</button>
         <button class="reject-btn">Reject Changes</button>
     `;
     container.appendChild(actions);
 
-    // Add cleanup on container removal
-    const cleanup = () => {
+    container.addEventListener('remove', () => {
         if (diffEditor) {
             diffEditor.dispose();
         }
-    };
-    container.addEventListener('remove', cleanup);
+    });
+
+    const buttonStyles = document.createElement('style');
+    buttonStyles.textContent = `
+        .diff-actions button {
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        
+        .show-in-source-btn {
+            background: #2d2d2d;
+            color: white;
+        }
+        
+        .show-in-source-btn:hover {
+            background: #3d3d3d;
+        }
+        
+        .accept-btn {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .accept-btn:hover {
+            background: #45a049;
+        }
+        
+        .reject-btn {
+            background: #f44336;
+            color: white;
+        }
+        
+        .reject-btn:hover {
+            background: #da190b;
+        }
+    `;
+    document.head.appendChild(buttonStyles);
     
     return container;
 }
 
-// Add Monaco editor specific styles for diffs
+// ADDED: Monaco editor styles to include read-only styling
 const monacoStyles = document.createElement('style');
 monacoStyles.textContent = `
     .diff-line-addition {
@@ -772,6 +827,7 @@ monacoStyles.textContent = `
     }
     .diff-line-deletion {
         background: rgba(244, 67, 54, 0.2) !important;
+        opacity: 0.7 !important;
     }
     .diff-gutter-addition {
         border-left: 3px solid #4CAF50 !important;
@@ -781,13 +837,20 @@ monacoStyles.textContent = `
         border-left: 3px solid #f44336 !important;
         margin-left: 3px;
     }
+    /* Styles for read-only lines */
+    div:has(>.editor-line-readonly) {
+        background-color: rgba(244, 67, 54, 0.1);
+        cursor: not-allowed !important;
+        z-index: 999 !important; /* Move above the code line to make it not selectable */
+        pointer-events: none !important;
+    }
 `;
 document.head.appendChild(monacoStyles);
 
+// ADDED: Append message to chat history
 function appendMessage(role, content) {
-    // Get the chat history container
     const chatHistory = document.getElementById('chat-history');
-    if (!chatHistory) return; // Safety check
+    if (!chatHistory) return;
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}-message`;
@@ -801,21 +864,16 @@ function appendMessage(role, content) {
         border: 1px solid ${role === 'user' ? '#1177bb' : '#3c3c3c'};
     `;
     
-    // Create content container with markdown support
     const contentDiv = document.createElement('div');
     contentDiv.className = 'markdown-content';
     
     if (role === 'user') {
-        // For user messages, just use plain text
         contentDiv.textContent = content;
     } else {
-        // For assistant messages, render markdown
         try {
             contentDiv.innerHTML = marked.parse(content);
             
-            // Add click handlers for code blocks
             contentDiv.querySelectorAll('pre code').forEach((block) => {
-                // Add copy button
                 const copyButton = document.createElement('button');
                 copyButton.className = 'code-copy-btn';
                 copyButton.innerHTML = '📋';
@@ -832,16 +890,13 @@ function appendMessage(role, content) {
                     transition: opacity 0.2s;
                 `;
                 
-                // Add container for code block with relative positioning
                 const codeContainer = document.createElement('div');
                 codeContainer.style.position = 'relative';
                 
-                // Move code block into container
                 block.parentNode.insertBefore(codeContainer, block);
                 codeContainer.appendChild(block.parentNode);
                 codeContainer.appendChild(copyButton);
                 
-                // Show/hide copy button on hover
                 codeContainer.addEventListener('mouseenter', () => {
                     copyButton.style.opacity = '1';
                 });
@@ -849,12 +904,10 @@ function appendMessage(role, content) {
                     copyButton.style.opacity = '0';
                 });
                 
-                // Copy code on click
                 copyButton.addEventListener('click', async () => {
                     const code = block.textContent;
                     await navigator.clipboard.writeText(code);
                     
-                    // Show feedback
                     const originalText = copyButton.innerHTML;
                     copyButton.innerHTML = '✓';
                     setTimeout(() => {
@@ -863,7 +916,6 @@ function appendMessage(role, content) {
                 });
             });
             
-            // Make links open in new tab
             contentDiv.querySelectorAll('a').forEach(link => {
                 link.target = '_blank';
                 link.rel = 'noopener noreferrer';
@@ -879,10 +931,10 @@ function appendMessage(role, content) {
     chatHistory.scrollTop = chatHistory.scrollHeight;
 }
 
+// ADDED: Apply smart diff comparing original content to proposed changes
 async function applySmartDiff(originalContent, proposedChanges) {
     const apiKey = await getOpenRouterApiKey();
     
-    // Generate tips based on code patterns
     const tips = [];
     for (const [pattern, tip] of Object.entries(DIFF_TIPS)) {
         if (proposedChanges.includes(pattern)) {
@@ -890,10 +942,9 @@ async function applySmartDiff(originalContent, proposedChanges) {
         }
     }
 
-    // Clean up the proposed changes before sending
     const cleanProposedChanges = proposedChanges
-        .replace(/^```[\w.]*\n/, '') // Remove opening code fence
-        .replace(/```$/, '')         // Remove closing code fence
+        .replace(/^```[\w.]*\n/, '')
+        .replace(/```$/, '')
         .trim();
 
     const prompt = `You are a senior software engineer that applies code changes to a file. Given the <original-content>, the <diff>, and the <adjustments>, apply the changes to the content. 
@@ -948,7 +999,6 @@ async function applySmartDiff(originalContent, proposedChanges) {
         const data = await response.json();
         let content = data.choices[0].message.content;
         
-        // Clean up the response
         content = content
             .replace(/^Here is the[^]*?:\n*/i, '')
             .replace(/^```[\w.]*\n/m, '')
@@ -956,10 +1006,8 @@ async function applySmartDiff(originalContent, proposedChanges) {
             .replace(/^Here are the changes[^]*?:\n*/i, '')
             .trim();
 
-        // Ensure proper line endings
         content = content.replace(/\r\n/g, '\n');
         
-        // Add final newline if missing
         if (!content.endsWith('\n')) {
             content += '\n';
         }
@@ -971,6 +1019,7 @@ async function applySmartDiff(originalContent, proposedChanges) {
     }
 }
 
+// ADDED: Agentic process for handling user input and overall ai chat flow
 async function agenticProcess(userInput) {
     lastFileState = sourceEditor.getValue();
     const maxAttempts = 3;
@@ -989,7 +1038,6 @@ async function agenticProcess(userInput) {
     }
     while (hasError && attempts < maxAttempts) {
         try {
-            // Show loading state
             const loadingMessage = document.createElement('div');
             loadingMessage.className = 'chat-message loading-message';
             loadingMessage.textContent = 'Thinking...';
@@ -1030,7 +1078,6 @@ async function agenticProcess(userInput) {
             const aiResponse = data.choices[0].message.content;
             loadingMessage.remove();
 
-            // Extract code and preserve the rest of the response
             let proposedChanges;
             let explanation = aiResponse;
             const codeMatch = aiResponse.match(/```[\s\S]*?\n([\s\S]*?)```/);
@@ -1043,48 +1090,85 @@ async function agenticProcess(userInput) {
                     appendMessage('assistant', explanation);
                 }
             } else {
-                // If no code block, just show the response
                 appendMessage('assistant', aiResponse);
-                return true; // Exit if this was just a conversation response
+                return true;
             }
 
-            // Show a loading message for the diff process
             appendMessage('assistant', 'Applying changes intelligently...');
             
             const currentCode = sourceEditor.getValue();
             const proposedCode = await applySmartDiff(currentCode, proposedChanges);
             
-            // Generate and show the diff preview
             const diff = generateDiff(currentCode, proposedCode);
-            const diffPreview = renderDiffPreview(diff);
+            const diffPreview = renderDiffPreview(diff, proposedCode);
             
-            // Create a promise that resolves when user accepts or rejects
             const userDecision = new Promise((resolve) => {
                 const acceptBtn = diffPreview.querySelector('.accept-btn');
                 const rejectBtn = diffPreview.querySelector('.reject-btn');
+                const showInSourceBtn = diffPreview.querySelector('.show-in-source-btn');
+                
+                let isShowingInSource = false;
+                let sourceDecorations = [];
+                const originalCode = sourceEditor.getValue();
+
+                showInSourceBtn.addEventListener('click', () => {
+                    isShowingInSource = true;
+                    const completeFileView = createCompleteFileView(originalCode, diff);
+                    sourceEditor.setValue(completeFileView);
+                    sourceDecorations = applyDiffDecorations(sourceEditor, completeFileView);
+                    
+                    showInSourceBtn.style.display = 'none';
+                    acceptBtn.textContent = 'Apply Changes';
+                    rejectBtn.textContent = 'Cancel';
+                });
                 
                 acceptBtn.addEventListener('click', () => {
-                    sourceEditor.setValue(proposedCode);
+                    if (isShowingInSource) {
+                        const currentContent = sourceEditor.getValue();
+                        const cleanContent = currentContent
+                            .split('\n')
+                            .map(line => {
+                                if (line.startsWith('+')) return line.substring(1);
+                                if (line.startsWith('-')) return null;
+                                return line;
+                            })
+                            .filter(line => line !== null)
+                            .join('\n');
+                        
+                        sourceEditor.setValue(cleanContent);
+                        sourceEditor.deltaDecorations(sourceDecorations, []);
+                    } else {
+                        sourceEditor.setValue(proposedCode);
+                    }
                     diffPreview.remove();
                     appendMessage('assistant', 'Changes applied successfully.');
                     resolve(true);
                 });
                 
                 rejectBtn.addEventListener('click', () => {
+                    if (isShowingInSource) {
+                        sourceEditor.setValue(originalCode);
+                        sourceEditor.deltaDecorations(sourceDecorations, []);
+                    }
                     diffPreview.remove();
                     appendMessage('assistant', 'Changes rejected.');
                     resolve(false);
                 });
+
+                diffPreview.addEventListener('remove', () => {
+                    if (isShowingInSource && !accepted) {
+                        sourceEditor.setValue(originalCode);
+                        sourceEditor.deltaDecorations(sourceDecorations, []);
+                    }
+                });
             });
             
-            // Add the diff preview to the chat
             const previewMessage = document.createElement('div');
             previewMessage.className = 'chat-message assistant-message';
             previewMessage.appendChild(diffPreview);
             chatHistory.appendChild(previewMessage);
             chatHistory.scrollTop = chatHistory.scrollHeight;
 
-            // Wait for user decision
             const accepted = await userDecision;
             hasError = !accepted;
 
@@ -1106,6 +1190,7 @@ async function agenticProcess(userInput) {
     return !hasError;
 }
 
+// ADDED: Generate prompt for ai chat (Kind of outdated due to new models)
 async function generatePrompt(userInput, hasNewModel) {
     const selectedLanguage = await getSelectedLanguage();
     const selectedModel = getSelectedModel();
@@ -1639,12 +1724,14 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     });
 
+    // ADDED: Monaco editor setup
+    // ADDED: Autocomplete setup
     require(["vs/editor/editor.main"], function (ignorable) {
         layout = new GoldenLayout(layoutConfig, $("#judge0-site-content"));
 
         layout.registerComponent("source", function (container, state) {
             
-            // Configure suggestions provider
+            // ADDED: Suggestions provider setup
             const suggestionsProvider = {
                 provideCompletionItems: async function(model, position, context, token) {
                     try {
@@ -1661,7 +1748,6 @@ document.addEventListener("DOMContentLoaded", async function () {
                         const lines = completion.split('\n');
                         const insertText = completion;
                         
-                        // Get the word at cursor position
                         const wordUntilPosition = model.getWordUntilPosition(position);
                         const range = {
                             startLineNumber: position.lineNumber,
@@ -1706,7 +1792,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 triggerCharacters: ['.', '(', '{', '[', ' ', '\n', '\t'],
             };
 
-            // Configure inline suggestions provider
+            // ADDED: Inline completions setup
             const inlineProvider = {
                 async provideInlineCompletions(model, position, context, token) {
                     try {
@@ -1752,7 +1838,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 handleItemDidShow: () => {},
             };
 
-            // Register both providers
+            // ADDED: Register both providers
             const suggestionDisposable = monaco.languages.registerCompletionItemProvider('*', suggestionsProvider);
             const inlineDisposable = monaco.languages.registerInlineCompletionsProvider('*', inlineProvider);
 
@@ -1815,14 +1901,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             sourceEditor = monaco.editor.create(container.getElement()[0], editorConfig);
 
-            // Wait for editor to be ready before adding commands and listeners
+            // ADDED: Trigger suggestions setup
             setTimeout(() => {
-                // Create debounced trigger function
                 const debouncedTriggerSuggestions = debounce(() => {
                     const model = sourceEditor.getModel();
                     const position = sourceEditor.getPosition();
                     
-                    // Only trigger if we're at the end of a line or after certain characters
                     const lineContent = model.getLineContent(position.lineNumber);
                     const charBeforeCursor = lineContent[position.column - 2] || '';
                     const triggerChars = ['.', '(', '{', '[', ' ', '\n'];
@@ -1835,30 +1919,29 @@ document.addEventListener("DOMContentLoaded", async function () {
                     sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.trigger', {});
                 }, AUTOCOMPLETE_DEBOUNCE_MS);
 
-                // Add keyboard shortcut for triggering suggestions manually
+                // ADDED: Keyboard shortcut for triggering inline suggestions
                 sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
-                    // Don't debounce manual triggers
                     sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.trigger', {});
                 });
 
-                // Add keyboard shortcut for accepting inline suggestion
+                // ADDED: Keyboard shortcut for accepting inline suggestion
                 sourceEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.RightArrow, () => {
                     sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.commit', {});
                 });
 
-                // Add keyboard shortcut for showing next inline suggestion
+                // ADDED: Keyboard shortcut for showing next inline suggestion
                 sourceEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.BracketRight, () => {
                     sourceEditor.trigger('keyboard', 'editor.action.inlineSuggest.showNext', {});
                 });
 
-                // Add event listener for cursor position changes
+                // ADDED: Event listener for cursor position changes
                 sourceEditor.onDidChangeCursorPosition((e) => {
                     if (e.reason === monaco.editor.CursorChangeReason.ContentChange) {
                         debouncedTriggerSuggestions();
                     }
                 });
 
-                // Add event listener for content changes
+                // ADDED: Event listener for content changes
                 sourceEditor.onDidChangeModelContent((e) => {
                     debouncedTriggerSuggestions();
                 });
@@ -1868,14 +1951,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             }, 100);
 
-            // Handle container resize
+            // ADDED: Handle container resize
             container.on('resize', () => {
                 if (sourceEditor) {
                     sourceEditor.layout();
                 }
             });
 
-            // Handle container destroy
+            // ADDED: Handle container destroy
             container.on('destroy', () => {
                 if (suggestionDisposable) {
                     suggestionDisposable.dispose();
@@ -1918,7 +2001,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             
             addAIChatContextMenu(stdoutEditor);
 
-            // Add content change listener
+            // ADDED: Content change listener for offering help in chat
             stdoutEditor.onDidChangeModelContent((e) => {
                 const content = stdoutEditor.getValue();
                 if (content.trim().length > 0) {
@@ -1927,9 +2010,8 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
         });
 
-        
+        // ADDED: AI chat setup layout setup
         layout.registerComponent("ai-chat", function (container, state) {
-            // Create chat container div
             const chatContainer = document.createElement('div');
             chatContainer.id = 'chat-container';
             chatContainer.style.cssText = `
@@ -1942,7 +2024,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 font-family: 'JetBrains Mono', monospace;
             `;
 
-            // Create model selector
+            // ADDED: Model selector setup
             const modelSelector = document.createElement('select');
             modelSelector.id = 'ai-model-selector';
             modelSelector.style.cssText = `
@@ -1961,7 +2043,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 modelSelector.appendChild(option);
             });
 
-            // Create chat history area
+            // ADDED: Chat history area setup
             const chatHistory = document.createElement('div');
             chatHistory.id = 'chat-history';
             chatHistory.style.cssText = `
@@ -1973,7 +2055,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 gap: 10px;
             `;
 
-            // Create input container
+            // ADDED: Input container setup
             const inputContainer = document.createElement('div');
             inputContainer.style.cssText = `
                 display: flex;
@@ -1984,7 +2066,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 align-items: flex-end;
             `;
 
-            // Create textarea for input
+            // ADDED: Textarea for input setup
             const textarea = document.createElement('textarea');
             textarea.id = 'chat-input';
             textarea.placeholder = 'Type your message here...';
@@ -2003,23 +2085,19 @@ document.addEventListener("DOMContentLoaded", async function () {
                 overflow-y: hidden;
             `;
 
-            // Add auto-resize functionality
+            // ADDED: Auto-resize functionality
             textarea.addEventListener('input', function() {
-                // Reset height to allow shrinking
                 this.style.height = 'auto';
-                
-                // Set new height based on scroll height, constrained by min/max
                 const newHeight = Math.min(Math.max(this.scrollHeight, 20), 150);
                 this.style.height = newHeight + 'px';
             });
 
-            // Initialize height on creation
             setTimeout(() => {
                 const event = new Event('input', { bubbles: true });
                 textarea.dispatchEvent(event);
             }, 0);
 
-            // Create submit button
+            // ADDED: Submit button setup
             const submitButton = document.createElement('button');
             submitButton.id = 'chat-submit';
             submitButton.textContent = 'Send';
@@ -2043,7 +2121,6 @@ document.addEventListener("DOMContentLoaded", async function () {
                 submitButton.style.background = '#0e639c';
             });
 
-            // Add event listeners
             textarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -2053,7 +2130,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             submitButton.addEventListener('click', handleChatSubmit);
 
-            // Append all elements
             inputContainer.appendChild(textarea);
             inputContainer.appendChild(submitButton);
             
@@ -2338,17 +2414,13 @@ function getLanguageForExtension(extension) {
     return EXTENSIONS_TABLE[extension] || { "flavor": CE, "language_id": 43 }; // Plain Text (https://ce.judge0.com/languages/43)
 }
 
+// ADDED: Function to get selected AI model
 function getSelectedModel() {
     const modelSelector = document.getElementById('ai-model-selector');
-    if (!modelSelector) return AI_MODELS['DeepSeek-R1']; // Default model if selector not found
     return modelSelector.value;
 }
 
-// Helper function to escape special regex characters
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// ADDED: Function to get OpenRouter API key
 async function getOpenRouterApiKey() {
     if (!OPENROUTER_API_KEY) {
         throw new Error('OpenRouter API key not found in configuration');
@@ -2356,7 +2428,7 @@ async function getOpenRouterApiKey() {
     return OPENROUTER_API_KEY;
 }
 
-// Helper function to add AI Chat context menu to any editor
+// ADDED: Function to add highlighted text to the AI Chat (Context Menu)
 function addAIChatContextMenu(editor) {
     editor.addAction({
         id: 'add-to-ai-chat',
@@ -2374,7 +2446,6 @@ function addAIChatContextMenu(editor) {
                     chatInput.value = currentValue + (currentValue ? '\n' : '') + selectedText;
                     chatInput.focus();
                     chatInput.scrollTop = chatInput.scrollHeight;
-                    // Trigger the resize event
                     const event = new Event('input', { bubbles: true });
                     chatInput.dispatchEvent(event);
                 }
@@ -2383,6 +2454,7 @@ function addAIChatContextMenu(editor) {
     });
 }
 
+// ADDED: Function to analyze output error sentiment
 async function analyzeOutputError(output) {
     try {
         const apiKey = await getOpenRouterApiKey();
@@ -2413,7 +2485,6 @@ async function analyzeOutputError(output) {
         console.log("Analysis:", analysis);
         
         if (analysis === "error") {
-            // Create error help prompt
             const chatHistory = document.getElementById('chat-history');
             if (!chatHistory) return;
 
@@ -2429,7 +2500,6 @@ async function analyzeOutputError(output) {
             chatHistory.appendChild(helpMessage);
             chatHistory.scrollTop = chatHistory.scrollHeight;
 
-            // Create promise for user response
             return new Promise((resolve) => {
                 const yesBtn = helpMessage.querySelector('#error-help-yes');
                 const noBtn = helpMessage.querySelector('#error-help-no');
@@ -2439,12 +2509,12 @@ async function analyzeOutputError(output) {
                     clearTimeout(timeout);
                     yesBtn.removeEventListener('click', handleYes);
                     noBtn.removeEventListener('click', handleNo);
+                    helpMessage.remove();
                 };
 
                 const handleYes = () => {
                     cleanup();
                     resolve(true);
-                    // Create error fix prompt and send to agenticProcess
                     const errorFixPrompt = `I got this error in my code. Can you help me fix it?\n\nError output:\n${output}`;
                     agenticProcess(errorFixPrompt);
                 };
@@ -2457,11 +2527,9 @@ async function analyzeOutputError(output) {
                 yesBtn.addEventListener('click', handleYes);
                 noBtn.addEventListener('click', handleNo);
 
-                // Set timeout for 15 seconds
                 timeout = setTimeout(() => {
                     cleanup();
                     resolve(false);
-                    helpMessage.remove();
                 }, 15000);
             });
         }
