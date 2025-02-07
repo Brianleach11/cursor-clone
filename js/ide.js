@@ -1025,6 +1025,8 @@ async function agenticProcess(userInput) {
     const maxAttempts = 3;
     let attempts = 0;
     let hasError = true;
+    let needsNewPrompt = false;
+    let lastSuggestion = "";
     const chatHistory = document.getElementById('chat-history');
     if (!chatHistory) {
         console.error('Chat history element not found');
@@ -1043,7 +1045,7 @@ async function agenticProcess(userInput) {
             loadingMessage.textContent = 'Thinking...';
             chatHistory.appendChild(loadingMessage);
 
-            const prompt = await generatePrompt(userInput, hasNewModel);
+            const prompt = await generatePrompt(userInput, hasNewModel, needsNewPrompt, lastSuggestion);
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -1171,7 +1173,8 @@ async function agenticProcess(userInput) {
 
             const accepted = await userDecision;
             hasError = !accepted;
-
+            needsNewPrompt = hasError;
+            lastSuggestion = proposedChanges;
         } catch (error) {
             if (error.message.includes('API key not found')) {
                 appendMessage('assistant', 'Error: OpenRouter API key not configured. Please check your .env file.');
@@ -1191,7 +1194,7 @@ async function agenticProcess(userInput) {
 }
 
 // ADDED: Generate prompt for ai chat (Kind of outdated due to new models)
-async function generatePrompt(userInput, hasNewModel) {
+async function generatePrompt(userInput, hasNewModel, needsNewPrompt, lastSuggestion) {
     const selectedLanguage = await getSelectedLanguage();
     const selectedModel = getSelectedModel();
     const codeContext = lastFileState ? `\nCurrent code context:\n\`\`\`${selectedLanguage.name}\n${lastFileState}\n\`\`\`` : '';
@@ -1271,6 +1274,7 @@ Key security considerations:`;
                     ${safetyPrompt}
                     Context:${codeContext}
                     ${chatHistoryPrompt}
+                    ${needsNewPrompt ? `This is the last attempt but the user is not satisfied. Please iterate on this and offer a new solution. Identify the exact problem and reduce the suggested code to directly solve only that problem. \nLast suggestion: ${lastSuggestion}` : ''}
                     Query: ${userInput} [/INST]`;
     }
 }
